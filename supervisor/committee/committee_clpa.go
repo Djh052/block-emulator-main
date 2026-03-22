@@ -29,8 +29,8 @@ type CLPACommitteeModule struct {
 	// additional variants
 	curEpoch            int32
 	clpaLock            sync.Mutex
-	clpaGraph           *partition.CLPAState
-	modifiedMap         map[string]uint64
+	clpaGraph           *partition.CLPAState //全局交易图
+	modifiedMap         map[string]uint64    //账户地址 → 分片ID
 	clpaLastRunningTime time.Time
 	clpaFreq            int
 
@@ -88,7 +88,7 @@ func (ccm *CLPACommitteeModule) txSending(txlist []*core.Transaction) {
 					log.Panic(err)
 				}
 				send_msg := message.MergeMessage(message.CInject, itByte)
-				go networks.TcpDial(send_msg, ccm.IpNodeTable[sid][0])
+				go networks.TcpDial(send_msg, ccm.IpNodeTable[sid][0]) //发送交易
 			}
 			sendToShard = make(map[uint64][]*core.Transaction)
 			time.Sleep(time.Second)
@@ -97,7 +97,8 @@ func (ccm *CLPACommitteeModule) txSending(txlist []*core.Transaction) {
 			break
 		}
 		tx := txlist[idx]
-		sendersid := ccm.fetchModifiedMap(tx.Sender)
+		// 核心：根据 CLPA 动态分区确定目标分片
+		sendersid := ccm.fetchModifiedMap(tx.Sender) //查modified
 		sendToShard[sendersid] = append(sendToShard[sendersid], tx)
 	}
 }
@@ -142,12 +143,15 @@ func (ccm *CLPACommitteeModule) MsgSendingControl() {
 		if params.ShardNum > 1 && !ccm.clpaLastRunningTime.IsZero() && time.Since(ccm.clpaLastRunningTime) >= time.Duration(ccm.clpaFreq)*time.Second {
 			ccm.clpaLock.Lock()
 			clpaCnt++
+			//运行CLPA 分区算法，返回新的账户地址与分区关系map
 			mmap, _ := ccm.clpaGraph.CLPA_Partition()
-
+			//发送分区更新到所有分片
 			ccm.clpaMapSend(mmap)
+			// 更新 modifiedMap
 			for key, val := range mmap {
 				ccm.modifiedMap[key] = val
 			}
+			// 重置图
 			ccm.clpaReset()
 			ccm.clpaLock.Unlock()
 
@@ -220,6 +224,7 @@ func (ccm *CLPACommitteeModule) HandleBlockInfo(b *message.BlockInfoMsg) {
 		return
 	}
 	ccm.clpaLock.Lock()
+	// 收集所有分片的交易，更新全局图
 	for _, tx := range b.InnerShardTxs {
 		ccm.clpaGraph.AddEdge(partition.Vertex{Addr: tx.Sender}, partition.Vertex{Addr: tx.Recipient})
 	}

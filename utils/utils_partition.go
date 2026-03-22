@@ -7,7 +7,7 @@ import (
 	"strconv"
 )
 
-// the default method
+// the default method 基于地址哈希的确定性计算
 func Addr2Shard(addr Address) int {
 	last8_addr := addr
 	if len(last8_addr) > 8 {

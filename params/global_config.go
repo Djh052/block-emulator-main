@@ -16,7 +16,7 @@ var (
 
 // consensus layer & output file path
 var (
-	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 4), representing [CLPA_Broker, CLPA, Broker, Relay]"
+	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 5), representing [CLPA_Broker, CLPA, Broker, Relay, Leiden]"
 
 	PbftViewChangeTimeOut = 10000 // The view change threshold of pbft. If the process of PBFT is too slow, the view change mechanism will be triggered.
 
@@ -77,6 +77,9 @@ type globalConfig struct {
 	Delay       int `json:"Delay"`
 	JitterRange int `json:"JitterRange"`
 	Bandwidth   int `json:"Bandwidth"`
+
+	LeidenDecayRate float64 `json:"LeidenDecayRate"` // 时间衰减率
+	LeidenFrequency int     `json:"LeidenFrequency"` // Leiden 运行频率（秒）
 }
 
 func ReadConfigFile() {

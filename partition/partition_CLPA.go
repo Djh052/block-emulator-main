@@ -229,18 +229,23 @@ func (cs *CLPAState) getShard_score(v Vertex, uShard int) float64 {
 
 // CLPA 划分算法
 func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
+	// Step 1: 计算当前跨分片边数
 	cs.ComputeEdges2Shard()
 	fmt.Println("Before running CLPA, cross-shard edge number:", cs.CrossShardEdgeNum)
 	res := make(map[string]uint64)
 	updateTreshold := make(map[string]int)
+	// Step 2: 迭代优化（Label Propagation）
 	for iter := 0; iter < cs.MaxIterations; iter += 1 { // 第一层循环控制算法次数，constraint
-		for v := range cs.NetGraph.VertexSet {
+		for v := range cs.NetGraph.VertexSet { // 遍历所有节点
+			//反震荡机制：如果v已经迁移50次，不再考虑
 			if updateTreshold[v.Addr] >= 50 {
 				continue
 			}
 			neighborShardScore := make(map[int]float64)
 			max_score := -9999.0
+			// v现在在哪个分片，默认保留在原地
 			vNowShard, max_scoreShard := cs.PartitionMap[v], cs.PartitionMap[v]
+			// 计算将节点 v 移到各个邻居分片的得分
 			for _, u := range cs.NetGraph.EdgeSet[v] {
 				uShard := cs.PartitionMap[u]
 				// 对于属于 uShard 的邻居，仅需计算一次
@@ -252,6 +257,7 @@ func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 					}
 				}
 			}
+			// 移动到得分最高的分片（考虑负载均衡），考虑空分片
 			if vNowShard != max_scoreShard && cs.VertexsNumInShard[vNowShard] > 1 {
 				cs.PartitionMap[v] = max_scoreShard
 				res[v.Addr] = uint64(max_scoreShard)
@@ -259,7 +265,7 @@ func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 				// 重新计算 VertexsNumInShard
 				cs.VertexsNumInShard[vNowShard] -= 1
 				cs.VertexsNumInShard[max_scoreShard] += 1
-				// 重新计算Wk
+				// 增量更新分片负载
 				cs.changeShardRecompute(v, vNowShard)
 			}
 		}

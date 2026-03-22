@@ -26,7 +26,7 @@ func TestClpa(t *testing.T) {
 	reader.Read()
 	for {
 		data, err := reader.Read()
-		if err == io.EOF || datanum == 200000 {
+		if err == io.EOF || datanum == 300000 {
 			break
 		}
 		if err != nil {
