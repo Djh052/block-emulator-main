@@ -16,7 +16,7 @@ var (
 
 // consensus layer & output file path
 var (
-	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 5), representing [CLPA_Broker, CLPA, Broker, Relay, Leiden]"
+	ConsensusMethod = 0 // ConsensusMethod an Integer, which indicates the choice ID of methods / consensuses. Value range: [0, 5), representing [CLPA_Broker, CLPA, Broker, Relay, Louvain]"
 
 	PbftViewChangeTimeOut = 10000 // The view change threshold of pbft. If the process of PBFT is too slow, the view change mechanism will be triggered.
 
@@ -38,8 +38,8 @@ var (
 	LogWrite_path      = ExpDataRootDir + "/log"       // Log output path
 	DatabaseWrite_path = ExpDataRootDir + "/database/" // database write path
 
-	SupervisorAddr = "127.0.0.1:18800"        // Supervisor ip address
-	DatasetFile    = `./selectedTxs_300K.csv` // The raw BlockTransaction data path
+	SupervisorAddr = "127.0.0.1:18800"                // Supervisor ip address
+	DatasetFile    = `./final_8w_nodes_55w_edges.csv` // The raw BlockTransaction data path
 
 	ReconfigTimeGap = 50 // The time gap between epochs. This variable is only used in CLPA / CLPA_Broker now.
 )
@@ -77,9 +77,6 @@ type globalConfig struct {
 	Delay       int `json:"Delay"`
 	JitterRange int `json:"JitterRange"`
 	Bandwidth   int `json:"Bandwidth"`
-
-	LeidenDecayRate float64 `json:"LeidenDecayRate"` // 时间衰减率
-	LeidenFrequency int     `json:"LeidenFrequency"` // Leiden 运行频率（秒）
 }
 
 func ReadConfigFile() {

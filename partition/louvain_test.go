@@ -3,16 +3,15 @@ package partition
 import (
 	"blockEmulator/params"
 	"encoding/csv"
-	"fmt"
 	"io"
 	"log"
 	"os"
 	"testing"
 )
 
-func TestClpa(t *testing.T) {
-	k := new(CLPAState)
-	k.Init_CLPAState(0.5, 100, 4)
+func TestLouvain(t *testing.T) {
+	k := new(LouvainState)
+	k.Init_LouvainState(0.05, 100, 4)
 
 	txfile, err := os.Open("../" + params.DatasetFile)
 	if err != nil {
@@ -44,9 +43,6 @@ func TestClpa(t *testing.T) {
 			datanum++
 		}
 	}
-	fmt.Println("partitionmap", len(k.PartitionMap))
-	for sid, n := range k.VertexsNumInShard {
-		fmt.Printf("%d has vertexs: %d\n", sid, n)
-	}
-	k.CLPA_Partition()
+
+	k.Louvain_Partition()
 }

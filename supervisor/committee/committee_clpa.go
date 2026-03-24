@@ -42,7 +42,9 @@ type CLPACommitteeModule struct {
 	IpNodeTable map[uint64]map[uint64]string
 }
 
-func NewCLPACommitteeModule(Ip_nodeTable map[uint64]map[uint64]string, Ss *signal.StopSignal, sl *supervisor_log.SupervisorLog, csvFilePath string, dataNum, batchNum, clpaFrequency int) *CLPACommitteeModule {
+func NewCLPACommitteeModule(Ip_nodeTable map[uint64]map[uint64]string,
+	Ss *signal.StopSignal, sl *supervisor_log.SupervisorLog,
+	csvFilePath string, dataNum, batchNum, clpaFrequency int) *CLPACommitteeModule {
 	cg := new(partition.CLPAState)
 	cg.Init_CLPAState(0.5, 100, params.ShardNum)
 	return &CLPACommitteeModule{
@@ -72,7 +74,7 @@ func (ccm *CLPACommitteeModule) fetchModifiedMap(key string) uint64 {
 }
 
 func (ccm *CLPACommitteeModule) txSending(txlist []*core.Transaction) {
-	// the txs will be sent
+	// 按照分片分组
 	sendToShard := make(map[uint64][]*core.Transaction)
 
 	for idx := 0; idx <= len(txlist); idx++ {
@@ -97,8 +99,8 @@ func (ccm *CLPACommitteeModule) txSending(txlist []*core.Transaction) {
 			break
 		}
 		tx := txlist[idx]
-		// 核心：根据 CLPA 动态分区确定目标分片
-		sendersid := ccm.fetchModifiedMap(tx.Sender) //查modified
+		// 核心：根据 CLPA 动态分区确定发起者目标分片
+		sendersid := ccm.fetchModifiedMap(tx.Sender)
 		sendToShard[sendersid] = append(sendToShard[sendersid], tx)
 	}
 }

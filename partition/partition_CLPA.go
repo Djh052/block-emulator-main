@@ -6,16 +6,22 @@ import (
 	"crypto/sha256"
 	"encoding/gob"
 	"errors"
-	"fmt"
 	"log"
 	"math"
+	"os"
 	"strconv"
 )
+
+var logger *log.Logger
+
+func init() {
+	logger = log.New(os.Stdout, "[CLPA] ", log.Ldate|log.Ltime|log.Lshortfile)
+}
 
 // CLPA算法状态，state of constraint label propagation algorithm
 type CLPAState struct {
 	NetGraph          Graph          // 需运行CLPA算法的图
-	PartitionMap      map[Vertex]int // 记录分片信息的 map，某个节点属于哪个分片
+	PartitionMap      map[Vertex]int // 记录分片信息的 map，某个账户属于哪个分片
 	Edges2Shard       []int          // Shard 相邻接的边数，对应论文中的 total weight of edges associated with label k
 	VertexsNumInShard []int          // Shard 内节点的数目
 	WeightPenalty     float64        // 权重惩罚，对应论文中的 beta
@@ -231,9 +237,11 @@ func (cs *CLPAState) getShard_score(v Vertex, uShard int) float64 {
 func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 	// Step 1: 计算当前跨分片边数
 	cs.ComputeEdges2Shard()
-	fmt.Println("Before running CLPA, cross-shard edge number:", cs.CrossShardEdgeNum)
+	logger.Printf("Before running CLPA, cross-shard edge number: %d", cs.CrossShardEdgeNum)
+
 	res := make(map[string]uint64)
 	updateTreshold := make(map[string]int)
+
 	// Step 2: 迭代优化（Label Propagation）
 	for iter := 0; iter < cs.MaxIterations; iter += 1 { // 第一层循环控制算法次数，constraint
 		for v := range cs.NetGraph.VertexSet { // 遍历所有节点
@@ -271,11 +279,11 @@ func (cs *CLPAState) CLPA_Partition() (map[string]uint64, int) {
 		}
 	}
 	for sid, n := range cs.VertexsNumInShard {
-		fmt.Printf("%d has vertexs: %d\n", sid, n)
+		logger.Printf("Shard %d has vertexs: %d", sid, n)
 	}
 
 	cs.ComputeEdges2Shard()
-	fmt.Println("After running CLPA, cross-shard edge number:", cs.CrossShardEdgeNum)
+	logger.Printf("After running CLPA, cross-shard edge number: %d", cs.CrossShardEdgeNum)
 	return res, cs.CrossShardEdgeNum
 }
 

@@ -158,6 +158,16 @@ func NewPbftNode(shardID, nodeID uint64, pcc *params.ChainConfig, messageHandleT
 		p.ohm = &RawBrokerOutsideModule{
 			pbftNode: p,
 		}
+	case "Louvain":
+		ncdm := dataSupport.NewCLPADataSupport() // 直接用 CLPA 的 DataSupport
+		p.ihm = &CLPAPbftInsideExtraHandleMod{   // 直接用 CLPA 的模块
+			pbftNode: p,
+			cdm:      ncdm,
+		}
+		p.ohm = &CLPARelayOutsideModule{ // 直接用 CLPA 的模块
+			pbftNode: p,
+			cdm:      ncdm,
+		}
 	default:
 		p.ihm = &RawRelayPbftExtraHandleMod{
 			pbftNode: p,
@@ -176,7 +186,7 @@ func NewPbftNode(shardID, nodeID uint64, pcc *params.ChainConfig, messageHandleT
 
 // handle the raw message, send it to corresponded interfaces
 func (p *PbftConsensusNode) handleMessage(msg []byte) {
-	msgType, content := message.SplitMessage(msg)
+	msgType, content := message.SplitMessage(msg) //解析消息类型
 	switch msgType {
 	// pbft inside message type
 	case message.CPrePrepare:
@@ -219,7 +229,7 @@ func (p *PbftConsensusNode) handleClientRequest(con net.Conn) {
 		switch err {
 		case nil:
 			p.tcpPoolLock.Lock()
-			p.handleMessage(clientRequest)
+			p.handleMessage(clientRequest) //分发消息
 			p.tcpPoolLock.Unlock()
 		case io.EOF:
 			log.Println("client closed the connection by terminating the process")
