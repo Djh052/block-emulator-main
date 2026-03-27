@@ -2,89 +2,105 @@ package partition
 
 import (
 	"math"
-	"time"
 )
 
-// 带时间衰减权重的边
+// 带周期衰减权重的边
 type WeightedEdge struct {
-	Target    Vertex
-	Weight    float64 // 当前权重（考虑时间衰减）
-	Original  float64 // 原始权重
-	Timestamp int64   // 交易时间戳
+	Target Vertex
+	Weight float64 // 当前权重（考虑周期衰减）
+	Epoch  int     // 最后一次更新的周期
 }
 
-// 带权重的图（用于 Leiden + 时间衰减）
+// 带权重的图（用于 Leiden/Louvain + 周期衰减）
 type WeightedGraph struct {
 	VertexSet map[Vertex]bool
 	EdgeSet   map[Vertex][]WeightedEdge
 }
 
-// 添加带时间戳的边，计算衰减权重
-func (wg *WeightedGraph) AddEdgeWithTime(u, v Vertex, timestamp int64, decayRate float64) {
+// 添加带周期的边，计算衰减权重（新增权重封顶限制）
+func (wg *WeightedGraph) AddEdgeWithEpoch(u, v Vertex, currentEpoch int, decayRate float64) {
 	if wg.VertexSet == nil {
 		wg.VertexSet = make(map[Vertex]bool)
 	}
-	if _, ok := wg.VertexSet[u]; !ok {
-		wg.VertexSet[u] = true
-	}
-	if _, ok := wg.VertexSet[v]; !ok {
-		wg.VertexSet[v] = true
-	}
+	wg.VertexSet[u] = true
+	wg.VertexSet[v] = true
 
 	if wg.EdgeSet == nil {
 		wg.EdgeSet = make(map[Vertex][]WeightedEdge)
 	}
 
-	// 检查边是否已存在
-	edgeExists := false
-	for i, edge := range wg.EdgeSet[u] {
-		if edge.Target == v {
-			// 边已存在，更新权重（累加）
-			wg.EdgeSet[u][i].Weight += math.Exp(-decayRate * float64(time.Now().Unix()-timestamp))
-			wg.EdgeSet[u][i].Original += 1.0
-			wg.EdgeSet[u][i].Timestamp = timestamp
-			edgeExists = true
-			break
+	maxWeight := 10.0 // 权重封顶，防止形成无法切分的“超级绑定”
+
+	// 辅助函数：更新单向边
+	updateEdge := func(src, dst Vertex) {
+		edgeExists := false
+		for i, edge := range wg.EdgeSet[src] {
+			if edge.Target == dst {
+				age := currentEpoch - edge.Epoch
+				if age < 0 {
+					age = 0
+				}
+				decayedWeight := edge.Weight * math.Exp(-decayRate*float64(age))
+				newWeight := decayedWeight + 1.0
+
+				if newWeight > maxWeight {
+					newWeight = maxWeight
+				}
+
+				wg.EdgeSet[src][i].Weight = newWeight
+				wg.EdgeSet[src][i].Epoch = currentEpoch
+				edgeExists = true
+				break
+			}
+		}
+
+		if !edgeExists {
+			wg.EdgeSet[src] = append(wg.EdgeSet[src], WeightedEdge{
+				Target: dst,
+				Weight: 1.0,
+				Epoch:  currentEpoch,
+			})
 		}
 	}
 
-	if !edgeExists {
-		// 新边，计算时间衰减权重
-		currentTime := time.Now().Unix()
-		age := currentTime - timestamp
-		weight := math.Exp(-decayRate * float64(age))
-
-		edge := WeightedEdge{
-			Target:    v,
-			Weight:    weight,
-			Original:  1.0,
-			Timestamp: timestamp,
-		}
-
-		wg.EdgeSet[u] = append(wg.EdgeSet[u], edge)
-
-		// 反向边
-		reverseEdge := WeightedEdge{
-			Target:    u,
-			Weight:    weight,
-			Original:  1.0,
-			Timestamp: timestamp,
-		}
-		wg.EdgeSet[v] = append(wg.EdgeSet[v], reverseEdge)
-	}
+	// 无向图，双向添加
+	updateEdge(u, v)
+	updateEdge(v, u)
 }
 
-// 重新计算所有边的衰减权重（时间推移后调用）
-func (wg *WeightedGraph) ReDecayEdges(decayRate float64) {
-	currentTime := time.Now().Unix()
+// 重新计算所有边的衰减权重，并执行【边剪枝】与【节点清理】
+func (wg *WeightedGraph) ReDecayEdges(currentEpoch int, decayRate float64) {
+	pruneThreshold := 0.2 // 剪枝阈值
 
+	// 1. 衰减并清理过期的边
 	for src, edges := range wg.EdgeSet {
-		for i := range edges {
-			edge := &edges[i]
-			age := currentTime - edge.Timestamp
-			edge.Weight = edge.Original * math.Exp(-decayRate*float64(age))
+		var activeEdges []WeightedEdge
+		for _, edge := range edges {
+			age := currentEpoch - edge.Epoch
+			if age > 0 {
+				edge.Weight = edge.Weight * math.Exp(-decayRate*float64(age))
+				edge.Epoch = currentEpoch // 更新到最新周期
+			}
+
+			// 只有权重大于阈值的边才会被保留
+			if edge.Weight >= pruneThreshold {
+				activeEdges = append(activeEdges, edge)
+			}
 		}
-		wg.EdgeSet[src] = edges
+
+		if len(activeEdges) == 0 {
+			delete(wg.EdgeSet, src)
+		} else {
+			wg.EdgeSet[src] = activeEdges
+		}
+	}
+
+	// 2. 【核心修复】清理掉所有失去连接的“幽灵节点”
+	// 这样它们就不会再污染 Louvain 的负载均衡计算（BalancePenalty）
+	for v := range wg.VertexSet {
+		if len(wg.EdgeSet[v]) == 0 {
+			delete(wg.VertexSet, v)
+		}
 	}
 }
 
@@ -93,17 +109,6 @@ func (wg *WeightedGraph) GetWeightedDegree(v Vertex) float64 {
 	var totalWeight float64
 	for _, edge := range wg.EdgeSet[v] {
 		totalWeight += edge.Weight
-	}
-	return totalWeight
-}
-
-// 获取节点到指定分片的连接权重
-func (wg *WeightedGraph) GetEdgesToCommunity(v Vertex, partitionMap map[Vertex]int, community int) float64 {
-	var totalWeight float64
-	for _, edge := range wg.EdgeSet[v] {
-		if partitionMap[edge.Target] == community {
-			totalWeight += edge.Weight
-		}
 	}
 	return totalWeight
 }
@@ -128,7 +133,7 @@ func (wg WeightedGraph) PrintWeightedGraph() {
 	for v := range wg.VertexSet {
 		print(v.Addr, " edges: ")
 		for _, edge := range wg.EdgeSet[v] {
-			print("->", edge.Target.Addr, "(w:", edge.Weight, ") ", "\t")
+			print("->", edge.Target.Addr, "(w:", edge.Weight, ", ep:", edge.Epoch, ") \t")
 		}
 		println()
 	}

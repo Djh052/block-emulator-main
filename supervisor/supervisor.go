@@ -54,6 +54,12 @@ func (d *Supervisor) NewSupervisor(ip string, pcc *params.ChainConfig, committee
 
 	d.Ss = signal.NewStopSignal(3 * int(pcc.ShardNums))
 
+	//初始化分片性能值为1
+	shardPerformance := make([]float32, pcc.ShardNums)
+	for i := uint64(0); i < pcc.ShardNums; i++ {
+		shardPerformance[i] = 1.0
+	}
+
 	switch committeeMethod {
 	case "CLPA_Broker":
 		d.comMod = committee.NewCLPACommitteeMod_Broker(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize, params.ReconfigTimeGap)
@@ -62,7 +68,7 @@ func (d *Supervisor) NewSupervisor(ip string, pcc *params.ChainConfig, committee
 	case "Broker":
 		d.comMod = committee.NewBrokerCommitteeMod(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize)
 	case "Louvain":
-		d.comMod = committee.NewLouvainCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize, params.ReconfigTimeGap)
+		d.comMod = committee.NewPLouvainCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize, shardPerformance)
 	default: //reply
 		d.comMod = committee.NewRelayCommitteeModule(d.Ip_nodeTable, d.Ss, d.sl, params.DatasetFile, params.TotalDataSize, params.TxBatchSize)
 	}

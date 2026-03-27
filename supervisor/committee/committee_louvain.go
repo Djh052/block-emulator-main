@@ -50,8 +50,8 @@ func NewLouvainCommitteeModule(
 	dataNum, batchNum, louvainFrequency int,
 ) *LouvainCommitteeModule {
 	lg := new(partition.LouvainState)
-	// 这里的 0.05 可以按你的实验再调
-	lg.Init_LouvainState(0.05, 100, params.ShardNum)
+	// 这里的 0.5 可以按你的实验再调
+	lg.Init_LouvainState(2, 0.6, 100, params.ShardNum)
 
 	return &LouvainCommitteeModule{
 		csvPath:                csvFilePath,
@@ -159,6 +159,10 @@ func (lcm *LouvainCommitteeModule) MsgSendingControl() {
 			lcm.louvainLock.Lock()
 			louvainCnt++
 
+			if louvainCnt > 1 {
+				lcm.louvainGraph.NetGraph.ReDecayEdges(louvainCnt, lcm.louvainGraph.DecayRate)
+				lcm.sl.Slog.Printf("执行了 Epoch %d 的时间衰减\n", louvainCnt)
+			}
 			mmap, _ := lcm.louvainGraph.Louvain_Partition()
 			lcm.louvainMapSend(mmap)
 
@@ -166,7 +170,7 @@ func (lcm *LouvainCommitteeModule) MsgSendingControl() {
 				lcm.modifiedMap[key] = val
 			}
 
-			lcm.louvainReset()
+			//lcm.louvainReset()
 			lcm.louvainLock.Unlock()
 
 			for atomic.LoadInt32(&lcm.curEpoch) != int32(louvainCnt) {
@@ -231,7 +235,7 @@ func (lcm *LouvainCommitteeModule) louvainMapSend(m map[string]uint64) {
 
 func (lcm *LouvainCommitteeModule) louvainReset() {
 	lcm.louvainGraph = new(partition.LouvainState)
-	lcm.louvainGraph.Init_LouvainState(0.05, 100, params.ShardNum)
+	lcm.louvainGraph.Init_LouvainState(2, 0.6, 100, params.ShardNum)
 
 	// 把上一轮已经确定的账户分片关系保留为下一轮初始状态
 	for key, val := range lcm.modifiedMap {

@@ -160,11 +160,11 @@ func NewPbftNode(shardID, nodeID uint64, pcc *params.ChainConfig, messageHandleT
 		}
 	case "Louvain":
 		ncdm := dataSupport.NewCLPADataSupport() // 直接用 CLPA 的 DataSupport
-		p.ihm = &CLPAPbftInsideExtraHandleMod{   // 直接用 CLPA 的模块
+		p.ihm = &PLouvainPbftInsideExtraHandleMod{
 			pbftNode: p,
 			cdm:      ncdm,
 		}
-		p.ohm = &CLPARelayOutsideModule{ // 直接用 CLPA 的模块
+		p.ohm = &PLouvainRelayOutsideModule{
 			pbftNode: p,
 			cdm:      ncdm,
 		}

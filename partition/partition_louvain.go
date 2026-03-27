@@ -22,15 +22,16 @@ func init() {
 }
 
 type LouvainState struct {
-	NetGraph          Graph
+	NetGraph          WeightedGraph
 	PartitionMap      map[Vertex]int // 节点 -> 分片
 	VertexsNumInShard []int          // 每个分片中的节点数
 	CommTot           []float64      // 每个分片的总度 Σ_tot
 	BalancePenalty    float64        // 负载均衡惩罚系数 beta
+	DecayRate         float64        // 边权时间衰减系数
 	MaxIterations     int            // 最大迭代次数
 	CrossShardEdgeNum int            // 当前跨分片边数
 	ShardNum          int            // 固定分片数
-	TotalEdgeWeight   float64        // 图总边权 m（这里无权图中等于边数）
+	TotalEdgeWeight   float64        // 图总边权 m
 	GraphHash         []byte
 }
 
@@ -50,8 +51,9 @@ func (graph *LouvainState) Encode() []byte {
 }
 
 // 初始化参数
-func (ls *LouvainState) Init_LouvainState(bp float64, mIter, sn int) {
+func (ls *LouvainState) Init_LouvainState(bp float64, dr float64, mIter, sn int) {
 	ls.BalancePenalty = bp
+	ls.DecayRate = dr
 	ls.MaxIterations = mIter
 	ls.ShardNum = sn
 	ls.VertexsNumInShard = make([]int, ls.ShardNum)
@@ -61,29 +63,38 @@ func (ls *LouvainState) Init_LouvainState(bp float64, mIter, sn int) {
 
 // 加入节点，默认放到一个分片
 func (ls *LouvainState) AddVertex(v Vertex) {
-	ls.NetGraph.AddVertex(v)
-	if val, ok := ls.PartitionMap[v]; !ok {
+	if ls.NetGraph.VertexSet == nil {
+		ls.NetGraph.VertexSet = make(map[Vertex]bool)
+	}
+	if _, ok := ls.NetGraph.VertexSet[v]; ok {
+		return
+	}
+	ls.NetGraph.VertexSet[v] = true
+	if _, ok := ls.PartitionMap[v]; !ok {
 		ls.PartitionMap[v] = utils.Addr2Shard(v.Addr)
-	} else {
-		ls.PartitionMap[v] = val
 	}
 	ls.VertexsNumInShard[ls.PartitionMap[v]] += 1
 }
 
 // 加入边
 func (ls *LouvainState) AddEdge(u, v Vertex) {
+	ls.AddEdgeWithEpoch(u, v, 0)
+}
+
+// 加入带时间衰减的边
+func (ls *LouvainState) AddEdgeWithEpoch(u, v Vertex, currentEpoch int) {
 	if _, ok := ls.NetGraph.VertexSet[u]; !ok {
 		ls.AddVertex(u)
 	}
 	if _, ok := ls.NetGraph.VertexSet[v]; !ok {
 		ls.AddVertex(v)
 	}
-	ls.NetGraph.AddEdge(u, v)
+	ls.NetGraph.AddEdgeWithEpoch(u, v, currentEpoch, ls.DecayRate)
 }
 
 // 复制Louvain状态
 func (dst *LouvainState) CopyLouvain(src LouvainState) {
-	dst.NetGraph.CopyGraph(src.NetGraph)
+	dst.NetGraph.CopyWeightedGraph(src.NetGraph)
 
 	dst.PartitionMap = make(map[Vertex]int)
 	for v := range src.PartitionMap {
@@ -97,6 +108,7 @@ func (dst *LouvainState) CopyLouvain(src LouvainState) {
 	copy(dst.CommTot, src.CommTot)
 
 	dst.BalancePenalty = src.BalancePenalty
+	dst.DecayRate = src.DecayRate
 	dst.MaxIterations = src.MaxIterations
 	dst.CrossShardEdgeNum = src.CrossShardEdgeNum
 	dst.ShardNum = src.ShardNum
@@ -105,7 +117,7 @@ func (dst *LouvainState) CopyLouvain(src LouvainState) {
 
 // 输出状态
 func (ls *LouvainState) PrintLouvain() {
-	ls.NetGraph.PrintGraph()
+	ls.NetGraph.PrintWeightedGraph()
 	fmt.Println("Cross-shard edge number:", ls.CrossShardEdgeNum)
 	fmt.Println("Total edge weight:", ls.TotalEdgeWeight)
 
@@ -132,7 +144,7 @@ func (ls *LouvainState) ComputeCommunityStats() {
 	for v := range ls.NetGraph.VertexSet {
 		shard := ls.PartitionMap[v]
 		ls.VertexsNumInShard[shard] += 1
-		deg := float64(len(ls.NetGraph.EdgeSet[v]))
+		deg := ls.NetGraph.GetWeightedDegree(v)
 		ls.CommTot[shard] += deg
 		ls.TotalEdgeWeight += deg
 	}
@@ -140,8 +152,8 @@ func (ls *LouvainState) ComputeCommunityStats() {
 
 	for v, lst := range ls.NetGraph.EdgeSet {
 		vShard := ls.PartitionMap[v]
-		for _, u := range lst {
-			uShard := ls.PartitionMap[u]
+		for _, edge := range lst {
+			uShard := ls.PartitionMap[edge.Target]
 			if vShard != uShard {
 				ls.CrossShardEdgeNum += 1
 			}
@@ -188,11 +200,11 @@ func (ls *LouvainState) Stable_Init_Partition() error {
 
 // 获取节点v连向哪些分片，以及分别有多少条边
 // 这里是无权图，所以“边权”就是边数
-func (ls *LouvainState) NeighborShardEdges(v Vertex) map[int]int {
-	res := make(map[int]int)
-	for _, u := range ls.NetGraph.EdgeSet[v] {
-		uShard := ls.PartitionMap[u]
-		res[uShard] += 1
+func (ls *LouvainState) NeighborShardEdges(v Vertex) map[int]float64 {
+	res := make(map[int]float64)
+	for _, edge := range ls.NetGraph.EdgeSet[v] {
+		uShard := ls.PartitionMap[edge.Target]
+		res[uShard] += edge.Weight
 	}
 	return res
 }
@@ -221,15 +233,15 @@ func (ls *LouvainState) BalancePenaltyAfterInsert(targetShard int) float64 {
 // m         = 图总边数
 //
 // 说明：这里省略了统一的归一化常数，因为只用于比较大小。
-func (ls *LouvainState) getShard_gain(v Vertex, targetShard int, edgesToTarget int) float64 {
-	kv := float64(len(ls.NetGraph.EdgeSet[v]))
+func (ls *LouvainState) getShard_gain(v Vertex, targetShard int, edgesToTarget float64) float64 {
+	kv := ls.NetGraph.GetWeightedDegree(v)
 	m := ls.TotalEdgeWeight
 
 	if kv == 0 || m == 0 {
 		return -1e18
 	}
 
-	modularityGain := float64(edgesToTarget) - (kv*ls.CommTot[targetShard])/(2.0*m)
+	modularityGain := edgesToTarget - (kv*ls.CommTot[targetShard])/(2.0*m)
 	penalty := ls.BalancePenalty * ls.BalancePenaltyAfterInsert(targetShard)
 
 	return modularityGain - penalty
@@ -239,8 +251,8 @@ func (ls *LouvainState) getShard_gain(v Vertex, targetShard int, edgesToTarget i
 func (ls *LouvainState) changeShardRecompute(v Vertex, old int) {
 	newShard := ls.PartitionMap[v]
 
-	for _, u := range ls.NetGraph.EdgeSet[v] {
-		neighborShard := ls.PartitionMap[u]
+	for _, edge := range ls.NetGraph.EdgeSet[v] {
+		neighborShard := ls.PartitionMap[edge.Target]
 
 		// 原来 old-new 是跨分片，现在 new-new 不是跨分片
 		if neighborShard == newShard {
@@ -273,7 +285,7 @@ func (ls *LouvainState) Louvain_Partition() (map[string]uint64, int) {
 				continue
 			}
 
-			kv := len(ls.NetGraph.EdgeSet[v])
+			kv := ls.NetGraph.GetWeightedDegree(v)
 			if kv == 0 {
 				continue
 			}
@@ -289,10 +301,12 @@ func (ls *LouvainState) Louvain_Partition() (map[string]uint64, int) {
 
 			// 临时把v从原分片“移出”，这样计算gain时更合理
 			ls.VertexsNumInShard[oldShard]--
-			ls.CommTot[oldShard] -= float64(kv)
+			ls.CommTot[oldShard] -= kv
 
 			bestShard := oldShard
-			bestGain := 0.0 // 只有增益为正才迁移
+			//
+			edgesToOld := neighborShardEdges[oldShard]
+			bestGain := ls.getShard_gain(v, oldShard, edgesToOld)
 
 			for shard, edgesToShard := range neighborShardEdges {
 				if shard == oldShard {
@@ -308,7 +322,7 @@ func (ls *LouvainState) Louvain_Partition() (map[string]uint64, int) {
 			// 放回某个分片（原地或新分片）
 			ls.PartitionMap[v] = bestShard
 			ls.VertexsNumInShard[bestShard]++
-			ls.CommTot[bestShard] += float64(kv)
+			ls.CommTot[bestShard] += kv
 
 			if bestShard != oldShard {
 				res[v.Addr] = uint64(bestShard)
@@ -338,5 +352,10 @@ func (ls *LouvainState) Louvain_Partition() (map[string]uint64, int) {
 }
 
 func (ls *LouvainState) EraseEdges() {
-	ls.NetGraph.EdgeSet = make(map[Vertex][]Vertex)
+	ls.NetGraph.EdgeSet = make(map[Vertex][]WeightedEdge)
+}
+
+func (ls *LouvainState) LouvainReset() {
+	// 不再清空历史交易边，下一轮只保留衰减后的图并重新统计状态。
+	ls.ComputeCommunityStats()
 }

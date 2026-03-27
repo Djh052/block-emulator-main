@@ -1,6 +1,7 @@
 package signal
 
 import (
+	"blockEmulator/params"
 	"sync"
 )
 
@@ -10,12 +11,17 @@ type StopSignal struct {
 
 	stopGap       int // record how many empty txLists from leaders in a row
 	stopThreshold int // the threshold
+
+	stopEpoch          int //进行了多少epoch
+	stopEpochThreshold int //运行多少epoch后停止
 }
 
 func NewStopSignal(stop_Threshold int) *StopSignal {
 	return &StopSignal{
-		stopGap:       0,
-		stopThreshold: stop_Threshold,
+		stopGap:            0,
+		stopThreshold:      stop_Threshold,
+		stopEpoch:          0,
+		stopEpochThreshold: params.StopEpochThreshold,
 	}
 }
 
@@ -39,4 +45,10 @@ func (ss *StopSignal) GapEnough() bool {
 	ss.stoplock.Lock()
 	defer ss.stoplock.Unlock()
 	return ss.stopGap >= ss.stopThreshold
+}
+
+func (ss *StopSignal) EpochEnough() bool {
+	ss.stoplock.Lock()
+	defer ss.stoplock.Unlock()
+	return ss.stopEpoch >= ss.stopEpochThreshold
 }
